@@ -1,16 +1,35 @@
 type Keyof<T extends object> = keyof T
+interface EffectFn {
+  (): void
+  deps?: Set<Function>[]
+}
 
 const bucket = new WeakMap<object, Map<string | symbol, Set<Function>>>()
 
-let activeEffect: Function
+let activeEffect: EffectFn
 
-function effect(fn: Function) {
-  activeEffect = fn
+export function effect(fn: EffectFn) {
+  const effectFn: EffectFn = () => {
+    activeEffect = effectFn
 
-  fn()
+    cleanup(effectFn)
+    fn()
+  }
+
+  effectFn.deps = []
+  effectFn()
 }
 
-const data = { text: 'hello world' }
+function cleanup(effectFn: EffectFn) {
+  for (let i = 0; i < effectFn.deps!.length; i++) {
+    const deps = effectFn.deps![i]
+    deps.delete(effectFn)
+  }
+
+  effectFn.deps!.length = 0
+}
+
+const data = { ok: true, text: 'hello world' }
 
 const obj = new Proxy(data, {
   get(target, key) {
@@ -19,8 +38,7 @@ const obj = new Proxy(data, {
     return target[key as Keyof<typeof target>]
   },
   set(target, key, newVal) {
-    target[key as Keyof<typeof target>] = newVal
-
+    ;(target[key as Keyof<typeof target>] as any) = newVal
     trigger(target, key)
 
     return true
@@ -41,6 +59,8 @@ function track<T extends object>(target: T, key: string | symbol) {
   }
 
   deps.add(activeEffect)
+
+  activeEffect.deps?.push(deps)
 }
 
 function trigger<T extends object>(target: T, key: string | symbol) {
@@ -49,13 +69,21 @@ function trigger<T extends object>(target: T, key: string | symbol) {
 
   const effects = depsMap.get(key)
 
-  effects && effects.forEach((fn) => fn())
+  const effectsToRun = new Set(effects)
+  effectsToRun.forEach((fn) => fn())
 }
 
 effect(() => {
-  document.body.innerText = obj.text
+  document.body.innerText = obj.ok ? obj.text : 'not'
+  console.log('run effect function')
 })
 
 setTimeout(() => {
-  obj.text = 'hello vue3'
+  obj.ok = false
 }, 1000)
+
+
+setTimeout(() => {
+  console.log('updating text if ok is false')
+  obj.text = 'hello vue3'
+}, 3000)
