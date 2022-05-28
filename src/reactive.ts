@@ -1,19 +1,25 @@
 type Keyof<T extends object> = keyof T
+type EffectFnSet = Set<Function>
 interface EffectFn {
   (): void
-  deps?: Set<Function>[]
+  deps?: EffectFnSet[]
 }
 
-const bucket = new WeakMap<object, Map<string | symbol, Set<Function>>>()
+const bucket = new WeakMap<object, Map<string | symbol, EffectFnSet>>()
 
 let activeEffect: EffectFn
+const effectStack: EffectFn[] = []
 
 export function effect(fn: EffectFn) {
   const effectFn: EffectFn = () => {
     activeEffect = effectFn
+    effectStack.push(effectFn)
 
     cleanup(effectFn)
     fn()
+
+    effectStack.pop()
+    activeEffect = effectStack[effectStack.length - 1]
   }
 
   effectFn.deps = []
@@ -28,22 +34,6 @@ function cleanup(effectFn: EffectFn) {
 
   effectFn.deps!.length = 0
 }
-
-const data = { ok: true, text: 'hello world' }
-
-const obj = new Proxy(data, {
-  get(target, key) {
-    track(target, key)
-
-    return target[key as Keyof<typeof target>]
-  },
-  set(target, key, newVal) {
-    ;(target[key as Keyof<typeof target>] as any) = newVal
-    trigger(target, key)
-
-    return true
-  }
-})
 
 function track<T extends object>(target: T, key: string | symbol) {
   if (!activeEffect) return
@@ -69,21 +59,77 @@ function trigger<T extends object>(target: T, key: string | symbol) {
 
   const effects = depsMap.get(key)
 
-  const effectsToRun = new Set(effects)
+  const effectsToRun: EffectFnSet = new Set()
+  effects &&
+    effects.forEach((effectFn) => {
+      if (effectFn !== activeEffect) {
+        effectsToRun.add(effectFn)
+      }
+    })
   effectsToRun.forEach((fn) => fn())
 }
 
-effect(() => {
-  document.body.innerText = obj.ok ? obj.text : 'not'
-  console.log('run effect function')
+// const data = { ok: true, text: 'hello world' }
+
+// const obj = new Proxy(data, {
+//   get(target, key) {
+//     track(target, key)
+
+//     return target[key as Keyof<typeof target>]
+//   },
+//   set(target, key, newVal) {
+//     ;(target[key as Keyof<typeof target>] as any) = newVal
+//     trigger(target, key)
+
+//     return true
+//   }
+// })
+
+// effect(() => {
+//   document.body.innerText = obj.ok ? obj.text : 'not'
+//   console.log('run effect function')
+// })
+
+// setTimeout(() => {
+//   obj.ok = false
+// }, 1000)
+
+// setTimeout(() => {
+//   console.log('updating text if ok is false')
+//   obj.text = 'hello vue3'
+// }, 3000)
+
+const data = { foo: true, bar: true }
+
+const obj = new Proxy(data, {
+  get(target, key) {
+    track(target, key)
+
+    return target[key as Keyof<typeof target>]
+  },
+  set(target, key, newVal) {
+    ;(target[key as Keyof<typeof target>] as any) = newVal
+    trigger(target, key)
+
+    return true
+  }
 })
 
-setTimeout(() => {
-  obj.ok = false
-}, 1000)
+effect(() => {
+  obj.foo = !obj.foo
+  console.log(obj.foo)
+})
 
+// effect(function effectFn1() {
+//   console.log('effect1 executed')
 
-setTimeout(() => {
-  console.log('updating text if ok is false')
-  obj.text = 'hello vue3'
-}, 3000)
+//   effect(function effectFn2() {
+//     console.log('effect2 executed')
+
+//     obj.bar
+//   })
+
+//   obj.foo
+// })
+
+// obj.foo = false
