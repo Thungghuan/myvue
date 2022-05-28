@@ -6,7 +6,8 @@ interface EffectFn {
 }
 type EffectFnSet = Set<EffectFn>
 interface EffectFnOptions {
-  scheduler?: (fn: EffectFn) => any
+  scheduler?: (fn?: EffectFn) => any
+  lazy?: boolean
 }
 
 const bucket = new WeakMap<object, Map<string | symbol, EffectFnSet>>()
@@ -20,15 +21,22 @@ function effect(fn: EffectFn, options?: EffectFnOptions) {
     effectStack.push(effectFn)
 
     cleanup(effectFn)
-    fn()
+
+    const res = fn()
 
     effectStack.pop()
     activeEffect = effectStack[effectStack.length - 1]
+
+    return res
   }
 
   effectFn.options = options
   effectFn.deps = []
-  effectFn()
+  if (!options?.lazy) {
+    effectFn()
+  }
+
+  return effectFn
 }
 
 function cleanup(effectFn: EffectFn) {
@@ -80,6 +88,73 @@ function trigger<T extends object>(target: T, key: string | symbol) {
   })
 }
 
+export function computed(getter: () => any) {
+  let value: any
+  let dirty = true
+
+  const effectFn = effect(getter, {
+    lazy: true,
+    scheduler() {
+      dirty = true
+
+      trigger(obj, 'value')
+    }
+  })
+
+  const obj = {
+    get value() {
+      if (dirty) {
+        value = effectFn()
+
+        dirty = false
+      }
+
+      track(obj, 'value')
+
+      return value
+    }
+  }
+
+  return obj
+}
+
+export function watch(
+  source: any,
+  cb: (newValue?: any, oldValue?: any) => any
+) {
+  let getter: EffectFn
+
+  if (typeof source === 'function') {
+    getter = source
+  } else {
+    getter = () => traverse(source)
+  }
+
+  let oldValue: any, newValue
+
+  const effectFn = effect(() => getter(), {
+    lazy: true,
+    scheduler() {
+      newValue = effectFn()
+      cb(newValue, oldValue)
+      oldValue = newValue
+    }
+  })
+
+  oldValue = effectFn()
+}
+
+function traverse(value: any, seen = new Set()) {
+  if (typeof value !== 'object' || value === null || seen.has(value)) return
+
+  seen.add(value)
+  for (const k in value) {
+    traverse(value[k], seen)
+  }
+
+  return value
+}
+
 // const data = { ok: true, text: 'hello world' }
 
 // const obj = new Proxy(data, {
@@ -125,7 +200,7 @@ function flushJob() {
   })
 }
 
-const data = { foo: 1 }
+const data = { foo: 1, bar: 2 }
 
 const obj = new Proxy(data, {
   get(target, key) {
@@ -141,23 +216,44 @@ const obj = new Proxy(data, {
   }
 })
 
-effect(
-  () => {
-    console.log(obj.foo)
-  },
-  {
-    scheduler(fn: EffectFn) {
-      // setTimeout(fn)
-      jobQueue.add(fn)
-      flushJob()
-    }
-  }
-)
+// const effectFn = effect(
+//   () => {
+//     console.log(obj.foo)
+//   },
+//   {
+//     scheduler(fn?: EffectFn) {
+//       // setTimeout(fn)
+//       fn && jobQueue.add(fn)
+//       flushJob()
+//     },
+//     lazy: true
+//   }
+// )
 
-obj.foo++
-obj.foo++
+// // const sumRes = computed(() => obj.foo + obj.bar)
 
-console.log('end')
+// // obj.foo++
+// // effectFn()
+
+// // console.log(sumRes.value)
+// // obj.foo++
+// // console.log(sumRes.value)
+
+// // effect(() => {
+// //   console.log(sumRes.value)
+// // })
+
+// // obj.bar++
+
+console.log('watch')
+console.log(obj)
+
+watch(() => obj.foo, (val, oldVal) => {
+  console.log('obj has updated')
+  console.log('Before:', oldVal)
+  console.log('After:', val)
+})
+obj.foo++
 
 // effect(function effectFn1() {
 //   console.log('effect1 executed')
