@@ -1,8 +1,12 @@
 type Keyof<T extends object> = keyof T
-type EffectFnSet = Set<Function>
 interface EffectFn {
   (): void
   deps?: EffectFnSet[]
+  options?: EffectFnOptions
+}
+type EffectFnSet = Set<EffectFn>
+interface EffectFnOptions {
+  scheduler?: (fn: EffectFn) => any
 }
 
 const bucket = new WeakMap<object, Map<string | symbol, EffectFnSet>>()
@@ -10,7 +14,7 @@ const bucket = new WeakMap<object, Map<string | symbol, EffectFnSet>>()
 let activeEffect: EffectFn
 const effectStack: EffectFn[] = []
 
-export function effect(fn: EffectFn) {
+export function effect(fn: EffectFn, options?: EffectFnOptions) {
   const effectFn: EffectFn = () => {
     activeEffect = effectFn
     effectStack.push(effectFn)
@@ -22,6 +26,7 @@ export function effect(fn: EffectFn) {
     activeEffect = effectStack[effectStack.length - 1]
   }
 
+  effectFn.options = options
   effectFn.deps = []
   effectFn()
 }
@@ -45,7 +50,7 @@ function track<T extends object>(target: T, key: string | symbol) {
 
   let deps = depsMap.get(key)
   if (!deps) {
-    depsMap.set(key, (deps = new Set<Function>()))
+    depsMap.set(key, (deps = new Set()))
   }
 
   deps.add(activeEffect)
@@ -66,7 +71,13 @@ function trigger<T extends object>(target: T, key: string | symbol) {
         effectsToRun.add(effectFn)
       }
     })
-  effectsToRun.forEach((fn) => fn())
+  effectsToRun.forEach((effectFn) => {
+    if (effectFn.options?.scheduler) {
+      effectFn.options.scheduler(effectFn)
+    } else {
+      effectFn()
+    }
+  })
 }
 
 // const data = { ok: true, text: 'hello world' }
@@ -99,7 +110,7 @@ function trigger<T extends object>(target: T, key: string | symbol) {
 //   obj.text = 'hello vue3'
 // }, 3000)
 
-const data = { foo: true, bar: true }
+const data = { foo: 1 }
 
 const obj = new Proxy(data, {
   get(target, key) {
@@ -115,10 +126,19 @@ const obj = new Proxy(data, {
   }
 })
 
-effect(() => {
-  obj.foo = !obj.foo
-  console.log(obj.foo)
-})
+effect(
+  () => {
+    console.log(obj.foo)
+  },
+  {
+    scheduler(fn: Function) {
+      setTimeout(fn)
+    }
+  }
+)
+
+obj.foo++
+console.log('end')
 
 // effect(function effectFn1() {
 //   console.log('effect1 executed')
