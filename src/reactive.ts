@@ -118,9 +118,15 @@ export function computed(getter: () => any) {
   return obj
 }
 
+interface WatchOptions {
+  immediate?: boolean
+  flush?: 'pre' | 'post' | 'sync'
+}
+
 export function watch(
   source: any,
-  cb: (newValue?: any, oldValue?: any) => any
+  cb: (newValue?: any, oldValue?: any, onInvalidate?: Function) => any,
+  options?: WatchOptions
 ) {
   let getter: EffectFn
 
@@ -132,16 +138,38 @@ export function watch(
 
   let oldValue: any, newValue
 
+  let cleanup: Function
+  function onInvalidate(fn: Function) {
+    cleanup = fn
+  }
+
+  const job = () => {
+    newValue = effectFn()
+
+    if (cleanup) {
+      cleanup()
+    }
+
+    cb(newValue, oldValue, onInvalidate)
+    oldValue = newValue
+  }
+
   const effectFn = effect(() => getter(), {
     lazy: true,
-    scheduler() {
-      newValue = effectFn()
-      cb(newValue, oldValue)
-      oldValue = newValue
+    scheduler: () => {
+      if (options?.flush === 'post') {
+        Promise.resolve().then(job)
+      } else {
+        job()
+      }
     }
   })
 
-  oldValue = effectFn()
+  if (options?.immediate) {
+    job()
+  } else {
+    oldValue = effectFn()
+  }
 }
 
 function traverse(value: any, seen = new Set()) {
@@ -248,11 +276,14 @@ const obj = new Proxy(data, {
 console.log('watch')
 console.log(obj)
 
-watch(() => obj.foo, (val, oldVal) => {
-  console.log('obj has updated')
-  console.log('Before:', oldVal)
-  console.log('After:', val)
-})
+watch(
+  () => obj.foo,
+  (val, oldVal) => {
+    console.log('obj has updated')
+    console.log('Before:', oldVal)
+    console.log('After:', val)
+  }
+)
 obj.foo++
 
 // effect(function effectFn1() {
