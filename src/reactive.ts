@@ -14,7 +14,7 @@ const bucket = new WeakMap<object, Map<string | symbol, EffectFnSet>>()
 let activeEffect: EffectFn
 const effectStack: EffectFn[] = []
 
-export function effect(fn: EffectFn, options?: EffectFnOptions) {
+function effect(fn: EffectFn, options?: EffectFnOptions) {
   const effectFn: EffectFn = () => {
     activeEffect = effectFn
     effectStack.push(effectFn)
@@ -110,6 +110,21 @@ function trigger<T extends object>(target: T, key: string | symbol) {
 //   obj.text = 'hello vue3'
 // }, 3000)
 
+const jobQueue = new Set<EffectFn>()
+const p = Promise.resolve()
+
+let isFlushing = false
+function flushJob() {
+  if (isFlushing) return
+
+  isFlushing = true
+  p.then(() => {
+    jobQueue.forEach((job) => job())
+  }).finally(() => {
+    isFlushing = false
+  })
+}
+
 const data = { foo: 1 }
 
 const obj = new Proxy(data, {
@@ -131,13 +146,17 @@ effect(
     console.log(obj.foo)
   },
   {
-    scheduler(fn: Function) {
-      setTimeout(fn)
+    scheduler(fn: EffectFn) {
+      // setTimeout(fn)
+      jobQueue.add(fn)
+      flushJob()
     }
   }
 )
 
 obj.foo++
+obj.foo++
+
 console.log('end')
 
 // effect(function effectFn1() {
